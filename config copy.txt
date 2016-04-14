@@ -1,0 +1,10 @@
+hello
+goodbye
+yes
+no
+fractal
+folk
+file: 3.jpg
+file: 3a.jpg
+moon
+sun
