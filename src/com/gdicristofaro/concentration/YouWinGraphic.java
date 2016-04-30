@@ -40,12 +40,13 @@ public class YouWinGraphic {
 			0, 0, youWinImg.getWidth(), youWinImg.getHeight(), null);;
 	}
 
-	public synchronized void show(Runnable onFinish) {
+	public synchronized void show(final Runnable callback) {
 		task = new TimerTask() {
 			public void run() {
 				if (curFrame > SHOW_FRAMES) {
 					this.cancel();
 					task = null;
+					callback.run();
 				}
 					
 				

@@ -1,15 +1,7 @@
 package com.gdicristofaro.concentration;
 
-import java.applet.AudioClip;
-import java.awt.AlphaComposite;
-import java.awt.Color;
-import java.awt.Graphics;
-import java.awt.Graphics2D;
 import java.awt.GraphicsEnvironment;
 import java.awt.Rectangle;
-import java.awt.RenderingHints;
-import java.awt.event.ActionEvent;
-import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferStrategy;
@@ -18,24 +10,28 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
+import java.net.URL;
 import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashSet;
 import java.util.Random;
+import java.util.Timer;
 
 import javax.imageio.ImageIO;
-import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
 import javax.sound.sampled.Clip;
-import javax.sound.sampled.DataLine;
 import javax.sound.sampled.LineUnavailableException;
-import javax.sound.sampled.SourceDataLine;
 import javax.sound.sampled.UnsupportedAudioFileException;
+import javax.swing.JFileChooser;
 import javax.swing.JFrame;
-import java.util.Timer;
+import javax.swing.JOptionPane;
 
 public class Concentration extends JFrame {
+	/**
+	 * 
+	 */
+	private static final long serialVersionUID = 1L;
+
+
 	// a record of an item that is clicked and what should be launched
 	public static class ClickRecord {
 		private Rectangle bounds;
@@ -71,39 +67,38 @@ public class Concentration extends JFrame {
 		String fileStart = "file: ";
 		if (line.startsWith(fileStart)) {
 			String fileName = line.substring(fileStart.length(), line.length());
-			return new Card(new File(basePath + fileName), cardBack, timer, repaintRequest);
+			return new Card(new File(basePath + File.pathSeparator + fileName), cardBack, timer, repaintRequest);
 		}
 		else {
 			return new Card(line, cardBack, timer, repaintRequest);
 		}
 	}
 	
-	public static ArrayList<Card> makecards(String basePath, String configLoc, 
+	public static ArrayList<Card> makecards(File configFile, 
 			BufferedImage cardBack, Timer timer, Runnable repaintRequest) {
 		
 		ArrayList<Card> matches = new ArrayList<Card>();
 		
-		try {
-			// read each pair of items in config
-			BufferedReader in = new BufferedReader(new FileReader(configLoc));
+		if (!configFile.exists())
+			throw new IllegalStateException("Unable to open the config file found at " + configFile.getAbsolutePath());
+
+		// read each pair of items in config
+		BufferedReader in = new BufferedReader(new FileReader(configFile));
+		
+		String match1;
+		while ((match1 = in.readLine()) != null) {
+			String match2 = in.readLine();
+			if (match2 == null)
+				throw new IllegalStateException(
+					"There are an odd number of items for matches in the config file at" + configFile.getAbsolutePath());
 			
-			String match1;
-			while ((match1 = in.readLine()) != null) {
-				String match2 = in.readLine();
-				if (match2 == null)
-					throw new IllegalStateException("odd number of items for matches in config file");
-				
-				Card card1 = getCard(basePath, match1, cardBack, timer, repaintRequest);
-				Card card2 = getCard(basePath, match2, cardBack, timer, repaintRequest);
-				
-				matches.add(card1);
-				matches.add(card2);
-			}
+			Card card1 = getCard(configFile.getParent(), match1, cardBack, timer, repaintRequest);
+			Card card2 = getCard(configFile.getParent(), match2, cardBack, timer, repaintRequest);
 			
-			in.close();
-		} catch (IOException e) {
-			throw new IllegalStateException("unable to open file found at " + configLoc);
+			matches.add(card1);
+			matches.add(card2);
 		}
+		in.close();
 		
 		return matches;
 	}
@@ -134,96 +129,141 @@ public class Concentration extends JFrame {
         return clip;
 	}
 	
-	public static final int FPS = 32;
-	
-	// locations of internal audio files
-	private final static File soundtrackFile = new File("soundtrack.wav");
-	private final static File flipSoundFile = new File("flip.wav");
-	private final static File youWinSoundFile = new File("youwin.wav");
-	private final static File rightChoiceSoundFile = new File("rightchoice.wav");
-	private final static File wrongChoiceSoundFile = new File("wrongchoice.wav");
-	
+	public static <T> T loadInternalResource(String file, Function<URL, T> converter) {
+		return converter.convert(Concentration.class.getResource(file));
+	}
 
+	// loading an external resource that may or may not be present
+	public static <T> T loadExternalResource(String basePath, String file, 
+			Function<File, T> converter, Function<Exception, T> onError) {
+		try {
+			File f = new File(basePath + File.pathSeparator + file);
+			return converter.convert(f);
+		}
+		catch (Exception e) {
+			return onError.convert(e);
+		}
+	}
+	
+	public static int determineRows(int cardsNum) { 
+		int sqRt = (int)Math.sqrt(cardsNum);
+		int rows = sqRt;
+		while (cardsNum % rows != 0) {
+			rows--;
+		}
+		
+		int columns = cardsNum / rows;
+		
+		if ((columns / rows) > 3)
+			rows = sqRt;
+		
+		return rows;
+	}
+	
+	public static final int FPS = 32;
+	// wait 2000 millis before flipping cards back over
+	private static final int CARD_SHOW_WAIT_TIME = 2000;
+	
+	// locations of external audio files
+	private static final String SOUND_TRACK_LOC = "soundtrack.wav";
+	private static final String SOUND_FLIP_LOC = "flip.wav";
+	private static final String SOUND_WIN_LOC = "youwin.wav";
+	private static final String SOUND_RIGHTCHOICE_LOC = "rightchoice.wav";
+	private static final String SOUND_WRONGCHOICE_LOC = "wrongchoice.wav";
+	
+	// location of external graphics files
+	private static final String IMG_BACKGROUND_LOC = "background.png";
+	private static final String IMG_YOUWIN_LOC = "youwin.png";
+	private static final String IMG_CARDBACK_LOC = "cardback.png";
+
+	// location of internal graphics files
+	private static final String IMG_CLOSE_LOC = "close.png";
+	private static final String IMG_MUSICOFF_LOC = "musicoff.png";
+	private static final String IMG_MUSICON_LOC = "musicon.png";
+	private static final String IMG_WINDOWLARGE_LOC = "windowlarge.png";
+	private static final String IMG_WINDOWSMALL_LOC = "windowsmall.png";
+	
+	// default config file name
+	private static final String CONFIG_FILE_NAME = "config.txt";
+	
+	
 	
 	// settings
 	private boolean fullscreen = true;
 	private boolean soundson = true;
+	
+	// whether or not the game is accepting user actions for cards
+	private boolean acceptingAction = true;
+	
+	private final Runnable returnControl = () -> acceptingAction = true;
 
 	// all cards in order that they are rendered
 	private ArrayList<Card> cards;
 	//cards in match orrder (i.e. index 0 and 1 match)
 	private ArrayList<Card> matches;
 	
-	// indexes of cards that should not be rendered
-	private HashSet<Integer> found = new HashSet<Integer>();
-	// indexes of visible cards
-	private HashSet<Integer> showing = new HashSet<Integer>(); 
+	private YouWinGraphic youWin;
+	
+	// number of found cards
+	private int found = 0;
+	
+	// indexes of visible card (when second card is clicked, it will be handled immediately)
+	private Card showing = null; 
 	
 	// for animation and rendering
 	private final Timer timer = new Timer();
-	private final Runnable repaintRequest = new Runnable() {
-		public void run() {
-			Concentration.this.repaint();
-		}
-	};
+	private final Runnable repaintRequest = () -> Concentration.this.repaint();
 	
 	private BufferStrategy strategy;
-	
-	// image resources
-	private BufferedImage background, youwin, cardBack;
+
 	
 	// icons
-	private BufferedImage soundchoice, soundon, soundoff, windowchoice, windowsmall, windowlarge, close;
+	private BufferedImage soundChoice, windowChoice;
+	private BufferedImage soundOn, soundOff, windowSmall, windowLarge, close;
+	
+	// image resources
+	private BufferedImage background, youWinImg, cardBack;
 	
 	// sound resources
 	private Clip soundtrack, flipSound, youWinSound, rightChoiceSound, wrongChoiceSound;
 	
 	// items with listeners
-	private Collection<ClickRecord> listeners = new ArrayList<ClickRecord>();
+	private ArrayList<ClickRecord> listeners = new ArrayList<ClickRecord>();
 	
 	private final MouseAdapter mouseAdapter = new MouseAdapter() {
-
-		@Override
 		public void mouseClicked(MouseEvent e) {
 			int xClick = e.getX();
 			int yClick = e.getY();
 
-			// for this game, there is no overlapping items that can be clicked
-			for (ClickRecord record : listeners)
-				if (record.getBounds().contains(xClick, yClick))
+			// for this game, take the first item
+			for (ClickRecord record : listeners) {
+				if (record.getBounds().contains(xClick, yClick)) {
 					record.getAction().run();
+					return;
+				}
+			}
 		}
-		
 	};
 	
 	
-	public void loadResources() {
-		// TODO remove
-		//System.out.println(Concentration.class.getProtectionDomain().getCodeSource().getLocation().getPath());
-
-		try {
-			background = ImageIO.read(new File("background.jpg"));
-			cardBack = ImageIO.read(new File("cardback.jpg"));
-			youwin = ImageIO.read(new File("youwin.gif"));
-			close = ImageIO.read(Concentration.class.getResource("/close.jpg"));
-			soundon = ImageIO.read(Concentration.class.getResource("/musicon.jpg"));
-			soundoff = ImageIO.read(Concentration.class.getResource("/musicoff.jpg"));
-			windowsmall = ImageIO.read(Concentration.class.getResource("/windowsmall.jpg"));
-			windowlarge = ImageIO.read(Concentration.class.getResource("/windowlarge.jpg"));
-		} catch (IOException e) {
-			throw new IllegalStateException(e);
-		}
-	}
-	
 	public void init() {
 		loadInternalResources();
-		File configFile = loadConfigFile();
-		loadFileResources(configFile);
-		this.matches = loadCards(configFile);
+		
+		String configDir = 
+			new File(Concentration.class.getProtectionDomain().getCodeSource().getLocation().getPath()).getParent();
+		File configFile = new File(configDir + File.pathSeparator + CONFIG_FILE_NAME);
+		
+		Tuple<File, ArrayList<Card>> results = loadCards(configFile);
+		configFile = results.getFirst();
+		this.matches = results.getSecond();
+		
+		loadExternalResources(configFile.getParent());
+		
 		this.cards = randomizeCards(this.matches);
 		int rows = determineRows(this.cards.size());
+		
+		setupListeners();
 		determinePlacement();
-		startGame();
 	}
 	
 	
@@ -235,19 +275,6 @@ public class Concentration extends JFrame {
 	}
 
 
-
-	public static void playgame() {
-		if (CardsShowing.get(0).matchnumber == CardsShowing.get(1).matchnumber) {
-			playAudio(rightchoice);
-			CardsShowing.get(0).dissolve();
-			CardsShowing.get(1).dissolve();
-		}
-		else {
-			CardsShowing.get(0).putitback();
-			CardsShowing.get(1).putitback();
-			playAudio(wrongchoice);
-		}
-	}
 
 	public Concentration () {
 		loadResources();
@@ -269,24 +296,153 @@ public class Concentration extends JFrame {
 		createBufferStrategy(2);
 		strategy = getBufferStrategy();
 	}
+	
+	
 
+	public void loadInternalResources() {
+		Function<URL, BufferedImage> c = (URL url) -> ImageIO.read(url);
+		Function<String, BufferedImage> load = (String fileName) -> loadInternalResource(fileName, c);
+		this.soundOn = load.convert(IMG_MUSICON_LOC);
+		this.soundOff = load.convert(IMG_MUSICOFF_LOC);
+		this.windowSmall = load.convert(IMG_WINDOWSMALL_LOC);
+		this.windowLarge = load.convert(IMG_WINDOWLARGE_LOC);
+		this.close = load.convert(IMG_CLOSE_LOC);
+	}
+	
+	public void loadExternalResources(String dir) throws IllegalArgumentException {
+		Function<File, BufferedImage> loadImg = (File f) -> ImageIO.read(f);
 
+		this.background = loadExternalResource(dir, IMG_BACKGROUND_LOC, loadImg,
+			(Exception e) -> {
+				BufferedImage img = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
+				img.setRGB(0, 0, 0xFF000000);		// set to black background
+				return img;
+			});
 
-	public static void playAudio(File soundFile) {
-		if (soundson) {
-			try{
-				System.out.println("playing audio...");
-				audioInputStream = AudioSystem.getAudioInputStream(soundFile);
-				audioFormat = audioInputStream.getFormat();
-				DataLine.Info dataLineInfo = new DataLine.Info(SourceDataLine.class, audioFormat);
-				sourceDataLine = (SourceDataLine)AudioSystem.getLine(dataLineInfo);
-				soundsplaying++;
-				new PlayThread(soundFile).start();
-			}catch (Exception e) {
+		this.cardBack = loadExternalResource(dir, IMG_CARDBACK_LOC, loadImg,
+			(Exception e) -> {
+				BufferedImage img = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
+				img.setRGB(0, 0, 0xFFFFFFFF);		// set to white background
+				return img;
+			});
+
+		this.youWinImg = loadExternalResource(dir, IMG_YOUWIN_LOC, loadImg,
+			(Exception e) -> {
+				BufferedImage img = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
+				img.setRGB(0, 0, 0x0);		// set to transparent background
+				return img;
+			});
+		
+		this.youWin = new YouWinGraphic(this.youWinImg, this.repaintRequest, this.timer);
+
+		Function<File, Clip> loadSnd = (File f) -> loadClip(f);
+		Function<Exception, Clip> onSndErr = (Exception e) -> null;
+		
+		this.soundtrack = loadExternalResource(dir, SOUND_TRACK_LOC, loadSnd, onSndErr);
+		this.flipSound = loadExternalResource(dir, SOUND_FLIP_LOC, loadSnd, onSndErr);
+		this.youWinSound = loadExternalResource(dir, SOUND_WIN_LOC, loadSnd, onSndErr);
+		this.rightChoiceSound = loadExternalResource(dir, SOUND_RIGHTCHOICE_LOC, loadSnd, onSndErr);
+		this.wrongChoiceSound = loadExternalResource(dir, SOUND_WRONGCHOICE_LOC, loadSnd, onSndErr);
+	}
+	
+	public Tuple<File, ArrayList<Card>> loadCards(File configFile) {
+		// loop while we have errors loading the config file
+		while(true) {
+			try {
+				return Tuple.get(configFile, makecards(configFile, this.cardBack, this.timer, this.repaintRequest));
+			}
+			catch (Exception e) {
+				// show a file chooser to pick another file or exit
+				Object[] options = {"Locate Config File", "Exit"};
+				int choice = JOptionPane.showOptionDialog(null, 
+					"The program is having problems:\n" + e.getMessage(), "Error",
+					JOptionPane.DEFAULT_OPTION, JOptionPane.ERROR_MESSAGE,
+					null, options, options[0]);
+
+				if (choice == 0) {	  
+					JFileChooser fc = new JFileChooser();
+					fc.setCurrentDirectory(configFile.getParentFile());
+					fc.setDialogTitle("Choose Config File");
+					fc.setFileSelectionMode(JFileChooser.FILES_ONLY);
+					int returnVal = fc.showDialog(null, "Choose Config File");
+					if (returnVal == JFileChooser.APPROVE_OPTION)
+						configFile = fc.getSelectedFile();
+				}
+				else if (choice == 1) {
+					System.exit(0);
+				}
 			}
 		}
 	}
+	
+	
+	
+	
+	// TODO might be a cleaner way of doing this...
+	public void onCardClick(final Card c) {
+		// don't allow if not accepting action
+		if (!acceptingAction)
+			return;
+		
+		Runnable callback;
+		
+		// there are no cards showing yet
+		if (showing == null) {
+			showing = c;
+			callback = returnControl;
+		}
+		// there is a card showing, so either
+		else {
+			// if showing cards are next to each other in matches, they match and can be dissolved
+			if (matches.indexOf(showing) / 2 == matches.indexOf(c) / 2) {
+				callback = () -> {
+					// when cards are dissolved
+					Runnable onFinish = () -> {
+						// if we have found all items
+						if (found == matches.size()) {
+							final ClickRecord clickRecord = new ClickRecord(
+								new Rectangle(0,0,
+									Concentration.this.getWidth(), Concentration.this.getHeight()), 
+								() -> {
+									resetGame();
+									// remove this listener from the listeners
+									listeners.remove(clickRecord);
+								});
+							
+							youWin.show(() -> listeners.add(0, clickRecord));	
+						}
+						else {
+							// otherwise, just return control
+							returnControl.run();
+						}
+					};
 
+					found += 2;
+					showing = null;
+					c.onDissolve(CARD_SHOW_WAIT_TIME, null);
+					showing.onDissolve(CARD_SHOW_WAIT_TIME, onFinish);
+				};
+			}
+			// otherwise, put them back
+			else {
+				callback = () -> {
+					showing = null;
+					c.onFlipBack(CARD_SHOW_WAIT_TIME, null);
+					showing.onFlipBack(CARD_SHOW_WAIT_TIME, returnControl);
+				};
+			}
+		}
+		
+		// run the card flip
+		c.onFlip(0, callback);
+	}
+	
+	
+
+
+
+
+	/*
 	public void paint(Graphics g) {
 		Graphics2D g2 = (Graphics2D) strategy.getDrawGraphics();
 
@@ -349,6 +505,7 @@ public class Concentration extends JFrame {
 		youwintimer.start();
 	}
 
+	
 	static ActionListener youwingraphic = new ActionListener() {
 		public void actionPerformed(ActionEvent e) {
 			long currentTime = youwinInterval * youwincounter;
@@ -391,7 +548,7 @@ public class Concentration extends JFrame {
 		}
 		
 	}
-	
+	*/
 
 	public static class HandleMouse extends MouseAdapter { 
 
@@ -513,37 +670,3 @@ public class Concentration extends JFrame {
 		}
 	}
 }
-
-class PlayBackground extends Thread{
-	byte tempBuffer[] = new byte[10000];
-	public void run(){
-		try{
-			while (!(Concentration.GameWon) && (Concentration.soundson)) {
-				if (Concentration.soundson) {
-					System.out.println("playing background");
-					AudioInputStream audioInputStream = AudioSystem.getAudioInputStream(Concentration.soundtrack);
-					AudioFormat audioFormat = audioInputStream.getFormat();
-					DataLine.Info dataLineInfo = new DataLine.Info(SourceDataLine.class, audioFormat);
-
-					SourceDataLine sourceDataLine = (SourceDataLine)AudioSystem.getLine(dataLineInfo);
-					sourceDataLine.open(audioFormat);
-					sourceDataLine.start();
-
-					int count;
-					while(((count = audioInputStream.read(tempBuffer,0,tempBuffer.length)) != -1) && (!(Concentration.GameWon)) && (Concentration.soundson)){
-						if(count > 0){
-							sourceDataLine.write(tempBuffer, 0, count);
-						}
-					}
-
-					sourceDataLine.drain();
-					sourceDataLine.close();
-				}
-			}
-
-		}catch (Exception e) {
-		}
-	}
-}
-
-

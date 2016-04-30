@@ -70,7 +70,7 @@ public class Card {
 				imageWidth, imageHeight, null);
 		} 
 		catch (IOException e) {
-			e.printStackTrace(); 
+			throw new IllegalStateException("Unable to load image at " + file.getAbsolutePath());
 		}
 		
 		return cardImage;
@@ -167,7 +167,7 @@ public class Card {
 		return isVisible;
 	}
 	
-	public void onFlip() {
+	public void onFlip(int millisDelay, final Runnable callback) {
 		// don't flip if can't
 		if (!isShowing)
 			return;
@@ -180,18 +180,21 @@ public class Card {
 			
 			@Override
 			public void run() {
-				if (framesRemaining < 0)
+				if (framesRemaining < 0) {
 					this.cancel();
+					if (callback != null)
+						callback.run();
+				}
 				
 				framesRemaining--;
 				flipPos = ((float) (FLIP_FRAMES - framesRemaining)) / FLIP_FRAMES;
 				repaintRequest.run();
 			}
 			
-		}, 0, (long) (1000 / Concentration.FPS));
+		}, millisDelay, (long) (1000 / Concentration.FPS));
 	}
 	
-	public void onFlipBack() {
+	public void onFlipBack(int millisDelay, final Runnable callback) {
 		// don't flip if can't
 		if (isShowing)
 			return;
@@ -204,18 +207,22 @@ public class Card {
 			
 			@Override
 			public void run() {
-				if (framesRemaining < 0)
+				if (framesRemaining < 0) {
 					this.cancel();
+					if (callback != null)
+						callback.run();
+				}
+					
 				
 				framesRemaining--;
 				flipPos = ((float) framesRemaining) / FLIP_FRAMES;
 				repaintRequest.run();
 			}
 			
-		}, 0, (long) (1000 / Concentration.FPS));		
+		}, millisDelay, (long) (1000 / Concentration.FPS));		
 	}
 	
-	public void onDissolve() {
+	public void onDissolve(int millisDelay, final Runnable callback) {
 		// don't dissolve if already done
 		if (!isVisible)
 			return;
@@ -228,15 +235,19 @@ public class Card {
 			
 			@Override
 			public void run() {
-				if (framesRemaining < 0)
+				if (framesRemaining < 0) {
 					this.cancel();
+					if (callback != null)
+						callback.run();
+				}
+					
 				
 				framesRemaining--;
 				dissolveAmt = ((float) framesRemaining) / FLIP_FRAMES;
 				repaintRequest.run();
 			}
 			
-		}, 0, (long) (1000 / Concentration.FPS));	
+		}, millisDelay, (long) (1000 / Concentration.FPS));	
 	}
 	
 
