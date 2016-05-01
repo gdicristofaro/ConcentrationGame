@@ -14,9 +14,10 @@ import java.util.TimerTask;
 
 import javax.imageio.ImageIO;
 
-public class Card {
+public class Card implements Component {
 	public static final int CARD_WIDTH = 400;
 	public static final int CARD_HEIGHT = 600;
+	public static final int CARD_SPACING = 100;
 	private static final int CARD_MARGIN = 25;
 	
 	private static final int MAX_FONT_SIZE = 200;
@@ -258,7 +259,7 @@ public class Card {
 	 * @param baseY			the base y position
 	 * @param scale			how much the image should be scaled
 	 */
-	public void draw(Graphics2D g, int baseX, int baseY, float scale) {
+	public void paint(Graphics2D g, int baseX, int baseY, double scale) {
 		if (dissolveAmt == 0)
 			return;
 		

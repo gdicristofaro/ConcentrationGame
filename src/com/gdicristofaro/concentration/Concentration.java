@@ -1,5 +1,7 @@
 package com.gdicristofaro.concentration;
 
+import java.awt.Graphics;
+import java.awt.Graphics2D;
 import java.awt.GraphicsEnvironment;
 import java.awt.Rectangle;
 import java.awt.event.MouseAdapter;
@@ -12,6 +14,9 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Random;
 import java.util.Timer;
 
@@ -24,6 +29,10 @@ import javax.sound.sampled.UnsupportedAudioFileException;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JOptionPane;
+
+
+// TODO sound effect
+// TODO you win
 
 public class Concentration extends JFrame {
 	/**
@@ -82,30 +91,35 @@ public class Concentration extends JFrame {
 		if (!configFile.exists())
 			throw new IllegalStateException("Unable to open the config file found at " + configFile.getAbsolutePath());
 
-		// read each pair of items in config
-		BufferedReader in = new BufferedReader(new FileReader(configFile));
-		
-		String match1;
-		while ((match1 = in.readLine()) != null) {
-			String match2 = in.readLine();
-			if (match2 == null)
-				throw new IllegalStateException(
-					"There are an odd number of items for matches in the config file at" + configFile.getAbsolutePath());
+		try {
+			// read each pair of items in config
+			BufferedReader in = new BufferedReader(new FileReader(configFile));
 			
-			Card card1 = getCard(configFile.getParent(), match1, cardBack, timer, repaintRequest);
-			Card card2 = getCard(configFile.getParent(), match2, cardBack, timer, repaintRequest);
-			
-			matches.add(card1);
-			matches.add(card2);
+			String match1;
+			while ((match1 = in.readLine()) != null) {
+				String match2 = in.readLine();
+				if (match2 == null)
+					throw new IllegalStateException(
+						"There are an odd number of items for matches in the config file at" + configFile.getAbsolutePath());
+				
+				Card card1 = getCard(configFile.getParent(), match1, cardBack, timer, repaintRequest);
+				Card card2 = getCard(configFile.getParent(), match2, cardBack, timer, repaintRequest);
+				
+				matches.add(card1);
+				matches.add(card2);
+			}
+			in.close();
+		} 
+		catch (IOException e) {
+			throw new IllegalStateException("Error processing file: " + configFile.getAbsolutePath());
 		}
-		in.close();
 		
 		return matches;
 	}
 	
 	// creates randomized array of ordered list
-	public static ArrayList<Card> randomizeCards(ArrayList<Card> ordered) {
-		ArrayList<Card> randomized = new ArrayList<Card>();
+	public static Card[] randomizeCards(ArrayList<Card> ordered) {
+		Card[] randomized = new Card[ordered.size()];
 		
 
 		ArrayList<Card> copy = new ArrayList<Card>();
@@ -113,29 +127,35 @@ public class Concentration extends JFrame {
 			copy.add(ordered.get(i));
 
 		Random randomGenerator = new Random();
-		while (copy.size() > 0) {
+		for (int newIndex = 0; newIndex < ordered.size(); newIndex++) {
 			int index = randomGenerator.nextInt(copy.size());
-			randomized.add(copy.get(index));
+			randomized[newIndex] = copy.get(index);
 			copy.remove(index);
 		}
 		
 		return randomized;
 	}
 	
-	public static Clip loadClip(File path) throws LineUnavailableException, UnsupportedAudioFileException, IOException {
-		Clip clip = AudioSystem.getClip();
-        AudioInputStream inputStream = AudioSystem.getAudioInputStream(path);
-        clip.open(inputStream);
-        return clip;
+	public static Clip loadClip(File path) throws IOException {
+		try {
+			Clip clip = AudioSystem.getClip();
+	        AudioInputStream inputStream = AudioSystem.getAudioInputStream(path);
+	        clip.open(inputStream);
+	        return clip;
+		}
+		catch (LineUnavailableException | UnsupportedAudioFileException e) {
+			throw new IllegalStateException("Problem loading clip " + path.getAbsolutePath() + " into memory");
+		}
+
 	}
 	
-	public static <T> T loadInternalResource(String file, Function<URL, T> converter) {
+	public static <T> T loadInternalResource(String file, Reader<URL, T> converter) throws IOException {
 		return converter.convert(Concentration.class.getResource(file));
 	}
 
 	// loading an external resource that may or may not be present
 	public static <T> T loadExternalResource(String basePath, String file, 
-			Function<File, T> converter, Function<Exception, T> onError) {
+			Reader<File, T> converter, Function<Exception, T> onError) {
 		try {
 			File f = new File(basePath + File.pathSeparator + file);
 			return converter.convert(f);
@@ -159,6 +179,56 @@ public class Concentration extends JFrame {
 		
 		return rows;
 	}
+	
+	
+	/**
+	 * determines placement for cards and buttons
+	 * 
+	 * @param width		the screen width
+	 * @param height	the screen height
+	 * @param rows		how many rows of cards
+	 * @param cards		all of the cards in order to be rendered
+	 * @param buttons	all of the buttons in order to be rendered
+	 * @return			a tuple of the scaling of cards along with the mapping of objects to their position
+	 */
+	public static Tuple<Double, Map<Component, Rectangle>> determinePlacement(
+			int width, int height, int rows, Card[] cards, Button[] buttons) {
+		
+		Map<Component, Rectangle> positions = new HashMap<Component, Rectangle>();
+		
+		// place buttons
+		for (int i = 0; i < buttons.length; i++) {
+			int x = width - ((buttons.length - i) * (Button.BUTTON_SPACING + Button.BUTTON_WIDTH));
+			positions.put(buttons[i], 
+				new Rectangle(x, Button.BUTTON_SPACING, Button.BUTTON_WIDTH, Button.BUTTON_WIDTH));
+		}
+		
+		// determine card placement
+		int columns = (int) Math.ceil(((double) cards.length) / rows);
+		
+		double unscaledHeight = ((Card.CARD_HEIGHT + Card.CARD_SPACING) * rows) + Card.CARD_SPACING;
+		double unscaledWidth = ((Card.CARD_WIDTH + Card.CARD_SPACING) * columns) + Card.CARD_SPACING;
+		
+		// determine how much the cards should be scaled to fit appropriately on the screen
+		double scale = Math.min(((double) height) / unscaledHeight, ((double) width) / unscaledWidth);
+			
+		// determine upper left corner for where cards start
+		int xStart = (int) (width - ((scale * unscaledWidth) / 2));	
+		int yStart = (int) (height - ((scale * unscaledHeight) / 2));
+		
+		int cardWidth = (int) (Card.CARD_WIDTH * scale);
+		int cardHeight = (int) (Card.CARD_HEIGHT * scale);
+		
+		// determine placement for cards 
+		for (int i = 0; i < cards.length; i++) {
+			int cardX = (int) (xStart + ((Card.CARD_SPACING + ((i % rows) * (Card.CARD_WIDTH + Card.CARD_SPACING))) * scale));
+			int cardY = (int) (yStart + ((Card.CARD_SPACING + ((i / rows) * (Card.CARD_HEIGHT + Card.CARD_SPACING))) * scale));
+			positions.put(cards[i], new Rectangle(cardX, cardY, cardWidth, cardHeight));
+		}
+		
+		return Tuple.get(scale, positions);
+	}
+	
 	
 	public static final int FPS = 32;
 	// wait 2000 millis before flipping cards back over
@@ -191,6 +261,11 @@ public class Concentration extends JFrame {
 	// settings
 	private boolean fullscreen = true;
 	private boolean soundson = true;
+	private int rows;
+	
+	// scaling for cards
+	private double scale;
+
 	
 	// whether or not the game is accepting user actions for cards
 	private boolean acceptingAction = true;
@@ -198,7 +273,7 @@ public class Concentration extends JFrame {
 	private final Runnable returnControl = () -> acceptingAction = true;
 
 	// all cards in order that they are rendered
-	private ArrayList<Card> cards;
+	private Card[] cards;
 	//cards in match orrder (i.e. index 0 and 1 match)
 	private ArrayList<Card> matches;
 	
@@ -218,7 +293,6 @@ public class Concentration extends JFrame {
 
 	
 	// icons
-	private BufferedImage soundChoice, windowChoice;
 	private BufferedImage soundOn, soundOff, windowSmall, windowLarge, close;
 	
 	// image resources
@@ -226,6 +300,9 @@ public class Concentration extends JFrame {
 	
 	// sound resources
 	private Clip soundtrack, flipSound, youWinSound, rightChoiceSound, wrongChoiceSound;
+	
+	// drawable components
+	private ArrayList<Tuple<Component, Rectangle>> components = new ArrayList<Tuple<Component, Rectangle>>();
 	
 	// items with listeners
 	private ArrayList<ClickRecord> listeners = new ArrayList<ClickRecord>();
@@ -245,8 +322,50 @@ public class Concentration extends JFrame {
 		}
 	};
 	
+	private final Button buttonClose = 
+			new Button(() -> System.exit(0)) {
+		public BufferedImage getIcon() {
+			return Concentration.this.close;
+		}		
+	};
 	
-	public void init() {
+	private final Button buttonToggleSize = 
+			new Button(() -> Concentration.this.toggleFullScreen()) {
+		public BufferedImage getIcon() {
+			if (Concentration.this.fullscreen)
+				return Concentration.this.windowSmall;
+			else
+				return Concentration.this.windowLarge;
+		}
+	};
+	
+	private final Button buttonToggleSound = 
+			new Button(() -> Concentration.this.toggleSound()) {
+		public BufferedImage getIcon() {
+			if (Concentration.this.soundson)
+				return Concentration.this.soundOn;
+			else
+				return Concentration.this.soundOff;
+		}
+	};
+	
+	private final Button[] buttons = new Button[]{buttonToggleSound, buttonToggleSize, buttonClose};
+	
+	
+	public static void main(String[] args) {    
+		new Concentration();
+	}
+
+
+
+	public Concentration () {
+		setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+		setTitle("Concentration");
+		
+		setUndecorated(true);
+		setResizable(false);
+		GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().setFullScreenWindow(this);
+
 		loadInternalResources();
 		
 		String configDir = 
@@ -260,57 +379,85 @@ public class Concentration extends JFrame {
 		loadExternalResources(configFile.getParent());
 		
 		this.cards = randomizeCards(this.matches);
-		int rows = determineRows(this.cards.size());
+		this.rows = determineRows(this.cards.length);
 		
-		setupListeners();
-		determinePlacement();
-	}
-	
-	
-	public static void main(String[] args) {    
-		String theconfigfile = "config.txt";
-		mycards = new ArrayList<Card> (makecards(theconfigfile));
-		new PlayBackground().start();
-		mainwindow = new Concentration();
-	}
-
-
-
-	public Concentration () {
-		loadResources();
-		setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-		setTitle("Concentration");
+		setPlacementListeners();
+		addMouseListener(mouseAdapter);
 		
-		if (fullscreen) {
-			setUndecorated(true);
-			setResizable(false);
-			GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().setFullScreenWindow(this);
-		}
-		else {
-			setSize(700,500);
-			setLocationRelativeTo(null);
-		}
-		
-		addMouseListener(new HandleMouse());
 		setVisible(true);
 		createBufferStrategy(2);
 		strategy = getBufferStrategy();
 	}
 	
 	
+	// toggles sound on or off
+	public void toggleSound() {
+		if (this.soundson) {
+			this.soundson = false;
+			this.soundtrack.stop();
+		}
+		else {
+			this.soundson = true;
+			this.soundtrack.start();
+		}
+	}
+	
+	public void toggleFullScreen() {
+		if (this.fullscreen) {
+			this.fullscreen = false;
+			setResizable(false);
+			GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().setFullScreenWindow(this);
+		}
+		else {
+			this.fullscreen = true;
+			setSize(700,500);
+			setResizable(true);
+			setLocationRelativeTo(null);
+		}
+		
+		setPlacementListeners();
+	}
+	
+	public void setPlacementListeners() {
+		Tuple<Double, Map<Component, Rectangle>> result = 
+			determinePlacement(this.getWidth(), this.getHeight(), this.rows, this.cards, this.buttons);
+		
+		this.scale = result.getFirst();
+		
+		listeners.clear();
+		components.clear();
+		for (Entry<Component, Rectangle> e : result.getSecond().entrySet()) {
+			if (e.getKey() instanceof Button)
+				listeners.add(new ClickRecord(e.getValue(), ((Button) e.getKey()).getAction()));
+			else if (e.getKey() instanceof Card)
+				listeners.add(new ClickRecord(e.getValue(), () -> onCardClick((Card) e.getKey())));
+			
+			components.add(Tuple.get(e.getKey(), e.getValue()));
+		}
+	}
+	
+	
+
+
+	
 
 	public void loadInternalResources() {
-		Function<URL, BufferedImage> c = (URL url) -> ImageIO.read(url);
-		Function<String, BufferedImage> load = (String fileName) -> loadInternalResource(fileName, c);
-		this.soundOn = load.convert(IMG_MUSICON_LOC);
-		this.soundOff = load.convert(IMG_MUSICOFF_LOC);
-		this.windowSmall = load.convert(IMG_WINDOWSMALL_LOC);
-		this.windowLarge = load.convert(IMG_WINDOWLARGE_LOC);
-		this.close = load.convert(IMG_CLOSE_LOC);
+		try {
+			Reader<URL, BufferedImage> c = (URL url) -> ImageIO.read(url);
+			Reader<String, BufferedImage> load = (String fileName) -> loadInternalResource(fileName, c);
+			this.soundOn = load.convert(IMG_MUSICON_LOC);
+			this.soundOff = load.convert(IMG_MUSICOFF_LOC);
+			this.windowSmall = load.convert(IMG_WINDOWSMALL_LOC);
+			this.windowLarge = load.convert(IMG_WINDOWLARGE_LOC);
+			this.close = load.convert(IMG_CLOSE_LOC);			
+		}
+		catch (IOException e) {
+			throw new IllegalStateException("Could not find local file: " + e.getMessage());
+		}
 	}
 	
 	public void loadExternalResources(String dir) throws IllegalArgumentException {
-		Function<File, BufferedImage> loadImg = (File f) -> ImageIO.read(f);
+		Reader<File, BufferedImage> loadImg = (File f) -> ImageIO.read(f);
 
 		this.background = loadExternalResource(dir, IMG_BACKGROUND_LOC, loadImg,
 			(Exception e) -> {
@@ -335,7 +482,7 @@ public class Concentration extends JFrame {
 		
 		this.youWin = new YouWinGraphic(this.youWinImg, this.repaintRequest, this.timer);
 
-		Function<File, Clip> loadSnd = (File f) -> loadClip(f);
+		Reader<File, Clip> loadSnd = (File f) -> loadClip(f);
 		Function<Exception, Clip> onSndErr = (Exception e) -> null;
 		
 		this.soundtrack = loadExternalResource(dir, SOUND_TRACK_LOC, loadSnd, onSndErr);
@@ -375,10 +522,11 @@ public class Concentration extends JFrame {
 		}
 	}
 	
+	public void resetGame() {
+		// TODO
+	}
 	
 	
-	
-	// TODO might be a cleaner way of doing this...
 	public void onCardClick(final Card c) {
 		// don't allow if not accepting action
 		if (!acceptingAction)
@@ -406,7 +554,7 @@ public class Concentration extends JFrame {
 								() -> {
 									resetGame();
 									// remove this listener from the listeners
-									listeners.remove(clickRecord);
+									listeners.remove(this);
 								});
 							
 							youWin.show(() -> listeners.add(0, clickRecord));	
@@ -439,234 +587,14 @@ public class Concentration extends JFrame {
 	
 	
 
-
-
-
-	/*
-	public void paint(Graphics g) {
-		Graphics2D g2 = (Graphics2D) strategy.getDrawGraphics();
-
-		((Graphics2D) g2).setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-		g2.drawImage(background, 0, 0, mainwindow.getSize().width, mainwindow.getSize().height, null);
-		if (GameWon) { 
-
-			if ((youwin.getWidth()/mainwindow.getSize().width) >= (youwin.getHeight()/mainwindow.getSize().height)) {
-				int imageheight = (int)(((0.75 * mainwindow.getSize().width) * youwin.getHeight()) / youwin.getWidth());
-				int imagewidth = (int)(0.75 * mainwindow.getSize().width ); 
-				g2.drawImage(youwin, (int)(0.125 * mainwindow.getSize().width ), (int)((heightfraction * (((mainwindow.getSize().height - imageheight) / 2) + imageheight)) - imageheight), imagewidth, imageheight, null);
-			}
-			else {
-				int imageheight = (int)(0.75 * mainwindow.getSize().height );
-				int imagewidth = (int)(((0.75 * mainwindow.getSize().height) * youwin.getWidth()) / youwin.getHeight());
-				g2.drawImage(youwin, ((mainwindow.getSize().width - imagewidth) / 2), (int)(((heightfraction * 0.125 * mainwindow.getSize().height) + imageheight ) - imageheight), imagewidth, imageheight, null);
-			}
-		}
-		for(Card s : mycards) {
-			if (s.stillremaining && (!(CardsShowing.contains(s)))) { 
-				g2.drawImage(img, s.getxpos(), s.getypos(), (2 * Card.lengthconstant()), (3 * Card.lengthconstant()), null);
-			}
-			if (CardsShowing.contains(s)) { 
-				float alpha = (float) (.3 * s.dissolvefraction);
-				((Graphics2D) g2).setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
-				g2.fillRect(s.getshadowx(), s.getypos(), s.getnewcardw(), (3 * Card.lengthconstant()));
-				alpha = (float) (s.dissolvefraction);;
-				((Graphics2D) g2).setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
-				g2.drawImage(s.ToShow, s.getnewcardx(), s.getnewcardy(), s.getnewcardw(), (3 * Card.lengthconstant()), null);
-				((Graphics2D) g2).setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 1));
-			}
-		}
-		g2.setColor(Color.white);
-
-		if (soundson) {
-			soundchoice = soundon;
-		}
-		else {
-			soundchoice = soundoff;
-		}
-
-		if (fullscreen) {
-			g2.drawImage(close, (int)(mainwindow.getSize().width - (2 + (0.25 * Card.lengthconstant()))), 5, (int)(0.25 * Card.lengthconstant()), (int)(0.25 * Card.lengthconstant()), null);
-			g2.drawImage(windowsmall, (int)(mainwindow.getSize().width - (4 + (0.5 * Card.lengthconstant()))), 5, (int)(0.25 * Card.lengthconstant()), (int)(0.25 * Card.lengthconstant()), null);
-			g2.drawImage(soundchoice, (int)(mainwindow.getSize().width - (6 + (0.75 * Card.lengthconstant()))), 5, (int)(0.25 * Card.lengthconstant()), (int)(0.25 * Card.lengthconstant()), null);
-		}
-		else {
-			g2.drawImage(windowlarge, (int)(mainwindow.getSize().width - (2 + (0.25 * Card.lengthconstant()))), 25, (int)(0.25 * Card.lengthconstant()), (int)(0.25 * Card.lengthconstant()), null);
-			g2.drawImage(soundchoice, (int)(mainwindow.getSize().width - (4 + (0.5 * Card.lengthconstant()))), 25, (int)(0.25 * Card.lengthconstant()), (int)(0.25 * Card.lengthconstant()), null);    		
-		}
-		g2.dispose();
-		strategy.show();
-	}
-
-	public static void youwin () {
-
-		youwinInterval = 5;
-		youwintimer = new Timer(youwinInterval, youwingraphic);
-		youwinDuration = 530;
-		youwintimer.start();
-	}
-
-	
-	static ActionListener youwingraphic = new ActionListener() {
-		public void actionPerformed(ActionEvent e) {
-			long currentTime = youwinInterval * youwincounter;
-			fraction = (float)currentTime / youwinDuration;
-
-			if ((youwincounter * youwinInterval) >= youwinDuration) {
-				youwincounter = 0;
-				mainwindow.repaint();
-				youwintimer.stop();
-			}
-
-			heightfraction = (float) ( 1 - Math.abs(
-					Math.pow((((Math.sqrt(0.2) + Math.sqrt(1.2)) * fraction) - Math.sqrt(1.2)), 2) - 0.2
-					)); 		    	
-			youwincounter++;			        
-			mainwindow.repaint();
-		}
-	};
-
-
-
-	private static class CardSelector implements Runnable {
-
-		@Override
-		public void run() {
-			
-				if((CardsShowing.size() < 2) && (s.stillremaining) && (!(CardsShowing.contains(s))) && (s.getxpos() <= xclick) && ( xclick <= s.getxboundary()) && (s.getypos() <= yclick) && ( yclick <= s.getyboundary())) {
-					s.xposition = s.getxpos();
-					s.yposition = s.getypos();
-					Concentration.CardsShowing.add(s);
-					playAudio(flip);
-					s.flipcardover();
-					if (Concentration.CardsShowing.size() == 2) {
-						new WaitTime();
-					}
-				}
-			
-			// TODO Auto-generated method stub
-			
-		}
+	public void paint(Graphics gfx) {
+		Graphics2D g = (Graphics2D) strategy.getDrawGraphics();
 		
-	}
-	*/
-
-	public static class HandleMouse extends MouseAdapter { 
-
-		public void mouseReleased(MouseEvent e) {
-			int xclick = e.getX();
-			int yclick = e.getY();
-
-			if (fullscreen) {
-				
-				Runnable closeWindow = new Runnable() {
-					public void run() {
-						System.out.println("close window");
-						System.exit(0);
-					}
-				};
-				
-				Runnable fullScreenToggle = new Runnable() {
-					public void run() {
-						if (fullScreen) {
-							// TODO
-						}
-						else {
-							// TODO
-						}
-					}
-				};
-				
-				Runnable muteToggle = new Runnable() {
-					public void run() {
-						if (soundsOn) {
-							soundsOn = false;
-							mainwindow.repaint();
-						}
-						else {
-							soundsOn = true;
-							new PlayBackground().start();
-							mainwindow.repaint();
-						}
-					}
-				};
-				
-				
-				
-				if ((xclick >= (int)(mainwindow.getSize().width - (2 + (0.25 * Card.lengthconstant())))) && (yclick >= 5) && (xclick <= (int)(mainwindow.getSize().width - 2)) && (yclick <= (int)(5 + (0.25 * Card.lengthconstant())))) {
-					System.out.println("close window");
-					System.exit(0);
-				}
-				if ((xclick >= (int)(mainwindow.getSize().width - (4 + (0.5 * Card.lengthconstant())))) && (yclick >= 5) && (xclick <= (int)(mainwindow.getSize().width - (2 + (0.25 * Card.lengthconstant()))) && (yclick <= (int)(5 + (0.25 * Card.lengthconstant()))))) {
-					mainwindow.dispose();
-					fullscreen = false;
-					mainwindow = new Concentration();
-					System.out.println("fullscreen change");
-					return;
-				}
-				if ((xclick >= (int)(mainwindow.getSize().width - (6 + (0.75 * Card.lengthconstant())))) && (yclick >= 5) && (xclick <= (int)(mainwindow.getSize().width - (2 + (0.5 * Card.lengthconstant()))) && (yclick <= (int)(5 + (0.25 * Card.lengthconstant()))))) {
-					System.out.println("sound change");
-					if (soundson) {
-						soundson = false;
-						mainwindow.repaint();
-					}
-					else {
-						soundson = true;
-						new PlayBackground().start();
-						mainwindow.repaint();
-					}
-					return;
-				}    		
-			}
-			else {
-				if ((xclick >= (int)(mainwindow.getSize().width - (2 + (0.25 * Card.lengthconstant())))) && (yclick >= 25) && (xclick <= (int)(mainwindow.getSize().width - 2)) && (yclick <= (int)(25 + (0.25 * Card.lengthconstant())))) {
-					mainwindow.dispose();
-					fullscreen = true;
-					mainwindow = new Concentration();
-					System.out.println("fullscreen change");
-					return;
-				}
-				if ((xclick >= (int)(mainwindow.getSize().width - (4 + (0.5 * Card.lengthconstant())))) && (yclick >= 25) && (xclick <= (int)(mainwindow.getSize().width - (2 + (0.25 * Card.lengthconstant()))) && (yclick <= (int)(25 + (0.25 * Card.lengthconstant()))))) {
-					System.out.println("sound change");
-					if (soundson) {
-						soundson = false;
-						mainwindow.repaint();
-					}
-					else {
-						soundson = true;
-						new PlayBackground().start();
-						mainwindow.repaint();
-					}
-					return;
-				}
-			}
-
-			if (GameWon) {
-				mycards.clear();
-				Card.matchedcards = 0;
-				Card.totalcards = 0;
-				TempReadIn.cardnumber = 0;
-				String theconfigfile = "config.txt";
-				mycards = (makecards(theconfigfile));
-				GameWon = false;
-				ImageLoad();
-				new PlayBackground().start();
-				mainwindow.repaint();
-			}
-			else {
-
-				for(Card s : mycards) {
-					if((CardsShowing.size() < 2) && (s.stillremaining) && (!(CardsShowing.contains(s))) && (s.getxpos() <= xclick) && ( xclick <= s.getxboundary()) && (s.getypos() <= yclick) && ( yclick <= s.getyboundary())) {
-						s.xposition = s.getxpos();
-						s.yposition = s.getypos();
-						Concentration.CardsShowing.add(s);
-						playAudio(flip);
-						s.flipcardover();
-						if (Concentration.CardsShowing.size() == 2) {
-							new WaitTime();
-						}
-					}
-				}
-			}
-		}
+		// draw background
+		g.drawImage(this.background, 0, 0, this.getWidth(), this.getHeight(), null);
+		
+		// draw all items
+		for (Tuple<Component, Rectangle> entry : this.components)
+			entry.getFirst().paint(g, (int) entry.getSecond().getX(), (int) entry.getSecond().getY(), this.scale);
 	}
 }
