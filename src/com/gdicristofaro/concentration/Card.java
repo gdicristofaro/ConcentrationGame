@@ -14,7 +14,7 @@ import java.util.TimerTask;
 
 import javax.imageio.ImageIO;
 
-public class Card implements Component {
+public class Card {
 	public static final int CARD_WIDTH = 400;
 	public static final int CARD_HEIGHT = 600;
 	public static final int CARD_SPACING = 100;
@@ -92,11 +92,13 @@ public class Card implements Component {
 		gCard.setFont(new Font("ComicSansMS", Font.BOLD, fontSize));
 		FontMetrics fontMetrics = gCard.getFontMetrics();
 
-		int maxWidth = CONTENTS_WIDTH + 1;
+		// +1 so greater than CONTENTS_WIDTH / HEIGHT for looping
+		int maxWidth = 0;
 		int height = CONTENTS_HEIGHT + 1;
 		
 		// scale down font size until text fits
 		while (maxWidth > CONTENTS_WIDTH || height > CONTENTS_HEIGHT) {
+			maxWidth = 0;
 			fontSize -= 5;
 			gCard.setFont(new Font("ComicSansMS", Font.BOLD, fontSize));
 			fontMetrics = gCard.getFontMetrics();
@@ -130,10 +132,7 @@ public class Card implements Component {
 	
 	private final Timer timer;
 	private final Runnable repaintRequest;
-	
-	private boolean isShowing = false;
-	private boolean isVisible = true;
-	
+		
 	// 0 is face down, 1 is face up
 	private float flipPos = 0;
 	// 0 is dissappeared, 1 is opaque
@@ -157,34 +156,29 @@ public class Card implements Component {
 		this(cardFromText(imgText), cardBack, timer, repaintRequest);
 	}
 	
-	
-	// the front of the card is showing
-	public boolean isShowing() {
-		return isShowing;
-	}
-
 	// the card is still in play
 	public boolean isVisible() {
-		return isVisible;
+		return (dissolveAmt <= 0);
+	}
+	
+	public void setVisible(boolean visible) {
+		dissolveAmt = (visible) ? 1 : 0;
 	}
 	
 	public void onFlip(int millisDelay, final Runnable callback) {
-		// don't flip if can't
-		if (!isShowing)
-			return;
-		
 		// for all frames, do the flip and repaint
-		isShowing = false;
 		flipPos = 0;
 		timer.schedule(new TimerTask() {
 			int framesRemaining = FLIP_FRAMES;
 			
 			@Override
 			public void run() {
-				if (framesRemaining < 0) {
+				if (framesRemaining <= 0) {
 					this.cancel();
 					if (callback != null)
 						callback.run();
+					
+					return;
 				}
 				
 				framesRemaining--;
@@ -196,22 +190,19 @@ public class Card implements Component {
 	}
 	
 	public void onFlipBack(int millisDelay, final Runnable callback) {
-		// don't flip if can't
-		if (isShowing)
-			return;
-		
 		// for all frames, do the flip and repaint
-		isShowing = true;
 		flipPos = 1;
 		timer.schedule(new TimerTask() {
 			int framesRemaining = FLIP_FRAMES;
 			
 			@Override
 			public void run() {
-				if (framesRemaining < 0) {
+				if (framesRemaining <= 0) {
 					this.cancel();
 					if (callback != null)
 						callback.run();
+					
+					return;
 				}
 					
 				
@@ -224,31 +215,62 @@ public class Card implements Component {
 	}
 	
 	public void onDissolve(int millisDelay, final Runnable callback) {
-		// don't dissolve if already done
-		if (!isVisible)
-			return;
-		
-		// for all frames, do the flip and repaint
-		isVisible = false;
 		dissolveAmt = 1;
 		timer.schedule(new TimerTask() {
 			int framesRemaining = DISSOLVE_FRAMES;
 			
 			@Override
 			public void run() {
-				if (framesRemaining < 0) {
+				if (framesRemaining <= 0) {
 					this.cancel();
 					if (callback != null)
 						callback.run();
-				}
 					
+					return;
+				}
 				
 				framesRemaining--;
-				dissolveAmt = ((float) framesRemaining) / FLIP_FRAMES;
+				// bound appropriately
+				dissolveAmt = Math.min(1, Math.max(0, ((float) framesRemaining) / FLIP_FRAMES));
 				repaintRequest.run();
 			}
 			
 		}, millisDelay, (long) (1000 / Concentration.FPS));	
+	}
+	
+	private static class PositionData {
+		int cardWidth;
+		int cardHeight;
+		int cardX;
+		int cardY;
+		int shadowX;
+		int shadowY;
+	}
+	
+	private PositionData cache = new PositionData();
+	
+	// gets position data for the shadow and the card
+	private synchronized PositionData getPosition(int baseX, int baseY, double scale) {
+		double fullCardWidth = CARD_WIDTH * scale;
+		
+		// mid way through flipping, it will be 0
+		cache.cardWidth = (int) (Math.abs(flipPos - 0.5) * 2 * fullCardWidth);
+		
+		cache.cardHeight = (int) (Card.CARD_HEIGHT * scale);
+		
+		// the shadow should be centered based on the width vs. the full width of the card
+		cache.shadowX = (int) ((fullCardWidth - cache.cardWidth) * .5) + baseX;
+				
+		// the y for the shadow will be the same
+		cache.shadowY = baseY;
+		
+		// the card will be offset to simulate being lifted up off the table
+		double cardOffset = flipPos * SHADOW_OFFSET * scale;
+		
+		cache.cardX = (int) (cache.shadowX - cardOffset);
+		cache.cardY = (int) (cache.shadowY - cardOffset);
+		
+		return cache;
 	}
 	
 
@@ -259,112 +281,46 @@ public class Card implements Component {
 	 * @param baseY			the base y position
 	 * @param scale			how much the image should be scaled
 	 */
-	public void paint(Graphics2D g, int baseX, int baseY, double scale) {
+	public void paintCard(Graphics2D g, int baseX, int baseY, double scale) {
 		if (dissolveAmt == 0)
 			return;
 		
-		int cardYOffset = (int) (-flipPos * SHADOW_OFFSET * scale);
-
-		// mid way through flipping, it will be 0
-		int cardWidth = (int) ((Math.abs(flipPos - 0.5) + 0.5) * CARD_WIDTH * scale);
-		
-		// center the card width
-		int shadowXOffset = (int) (cardWidth *.5 * scale);
-
-		// offset for the shadow and lifting the card "up"
-		int cardXOffset = (int) ((-flipPos * SHADOW_OFFSET + shadowXOffset) * scale); 
-
-		// if flip amount is past halfway, switch to front
-		BufferedImage toDraw = (flipPos > 0.5) ? this.cardFront : this.cardBack;
-		
-		int cardW = (int) (toDraw.getWidth() * scale);
-		int cardH = (int) (toDraw.getHeight() * scale);
-		
-		// the location to draw each corner of the image
-		int cardX1 = baseX + cardXOffset;
-		int cardX2 = cardX1 + cardWidth;
-		int cardY1 = baseY + cardYOffset;
-		int cardY2 = cardY1 + cardH;
-		
-		// if there should be a shadow, draw appropriately
-		if (flipPos > 0) {
-			g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, SHADOW_ALPHA));
-			g.fillRect(baseX + shadowXOffset, baseY, cardW, cardH);	
-		}
+		PositionData cache = getPosition(baseX, baseY, scale);
 		
 		// draw card with dissolve amount
 		g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float) dissolveAmt));
 
+		// if flip amount is past halfway, switch to front
+		BufferedImage toDraw = (flipPos > 0.5) ? this.cardFront : this.cardBack;
+		
 		// draw the image
-		g.drawImage(toDraw, cardX1, cardY1, cardX2, cardY2, 0, 0, cardW, cardH, null);
+		g.drawImage(toDraw, cache.cardX, cache.cardY, cache.cardX + cache.cardWidth, cache.cardY + cache.cardHeight, 
+			0, 0, toDraw.getWidth(), toDraw.getHeight(), null);
+		
+		// reset alpha
+		g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 1));
 	}
 	
-	
-	
-	
-	
-	
-/*	public void totalrowsandcolumns() { 
-		SquareRoot = (int)Math.sqrt(totalcards);
-		totalcolumns = SquareRoot;
-		while (totalcards % totalcolumns != 0 ) {
-			totalcolumns-=1;
+	/**
+	 * draws the card at the specified location
+	 * @param g				the graphics to use to draw with
+	 * @param baseX			the base x position relative to the graphics
+	 * @param baseY			the base y position
+	 * @param scale			how much the image should be scaled
+	 */
+	public void paintShadow(Graphics2D g, int baseX, int baseY, double scale) {
+		if (dissolveAmt == 0)
+			return;
+		
+		PositionData cache = getPosition(baseX, baseY, scale);
+		
+		// if there should be a shadow, draw appropriately
+		if (flipPos > 0) {
+			g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, SHADOW_ALPHA * dissolveAmt));
+			g.fillRect(cache.shadowX, cache.shadowY, cache.cardWidth, cache.cardHeight);
+			
+			// reset alpha
+			g.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 1));
 		}
-		totalrows = totalcards / totalcolumns;
-		if ( ( totalrows / totalcolumns ) > 3) {
-			totalcolumns = SquareRoot;      
-			totalrows = ((totalcards / totalcolumns) + 1);
-		}
 	}
-
-	public int getrow() { 
-		row = cardnumber % totalrows;
-		if (row == 0) {
-			row += totalrows;
-		}
-		return row;
-	}
-
-	public int getcolumn() { 
-		column = (((cardnumber - 1) / totalrows) + 1);    
-		return column;
-	}
-
-	public static int lengthconstant() {
-		int lengthconstant;
-		if (((Concentration.mainwindow.getSize().height) / ((3.25 * Card.totalcolumns) + 1)) < ((Concentration.mainwindow.getSize().width) / ((2.25 * Card.totalrows) + 0.75))) {
-			lengthconstant = (int)((Concentration.mainwindow.getSize().height) / ((3.25 * Card.totalcolumns) + 1));
-		}
-		else {
-			lengthconstant = (int)((Concentration.mainwindow.getSize().width) / ((2.25 * Card.totalrows) + 0.75));
-		}
-		return lengthconstant;
-	}
-
-	public int getxpos() {
-		lengthconstant = lengthconstant();
-		int xpos = (int)(((Concentration.mainwindow.getSize().width - ((Card.lengthconstant() * totalrows * 2) + (Card.lengthconstant() * 0.25 * (totalrows - 1)))) / 2) + ((this.getrow() - 1) * 2.25 * Card.lengthconstant()));
-		return xpos;
-	}
-
-	public int getxboundary() {
-		lengthconstant = lengthconstant();
-		int xpos = this.getxpos();
-		int xboundary = xpos + (lengthconstant * 2);
-		return xboundary;
-	}
-
-	public int getyboundary() {
-		int lengthconstant = lengthconstant();
-		int ypos = this.getypos();
-		int yboundary = ypos + (lengthconstant * 3);
-		return yboundary;
-	}
-
-	public int getypos() {
-		lengthconstant = lengthconstant();
-		int ypos = (int)(((Concentration.mainwindow.getSize().height - ((Card.lengthconstant() * totalcolumns * 3) + (Card.lengthconstant() * 0.25) + (Card.lengthconstant() * 0.25 * (totalcolumns - 1)))) / 2) + (Card.lengthconstant() * 0.25) + ((this.getcolumn() - 1) * 3.25 * Card.lengthconstant()));
-		return ypos;
-	}
-*/
 }

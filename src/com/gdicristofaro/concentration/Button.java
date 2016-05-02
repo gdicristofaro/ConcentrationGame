@@ -3,7 +3,7 @@ package com.gdicristofaro.concentration;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
 
-public abstract class Button implements Component {
+public abstract class Button {
 	public static final int BUTTON_WIDTH = 20;
 	public static final int BUTTON_SPACING = 5;
 	
@@ -19,9 +19,9 @@ public abstract class Button implements Component {
 		return action;
 	}
 
-	@Override
-	public void paint(Graphics2D g, int x, int y, double scale) {
-		g.drawImage(getIcon(), x, y, (int) (x + scale * getIcon().getWidth()), (int) (y + scale * getIcon().getHeight()), 
+	public void paint(Graphics2D g, int x, int y) {
+		// ignore card scale and use button width
+		g.drawImage(getIcon(), x, y, (int) (x + BUTTON_WIDTH), (int) (y + BUTTON_WIDTH), 
 			0, 0, getIcon().getWidth(), getIcon().getHeight(), null);		
 	}
 }
