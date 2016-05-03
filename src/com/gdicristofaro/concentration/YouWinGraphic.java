@@ -23,20 +23,20 @@ public class YouWinGraphic {
 		this.timer = timer;
 	}
 	
-	public void paint(Graphics2D g, float scale, int startPos, int endPos, int centerX) {
+	public void paint(Graphics2D g, int width, int startPos, int endPos, int centerX) {
 		if (!visible)
 			return;
 		
 		// bouncing function
 		float showPos = ((float) curFrame) / SHOW_FRAMES;
 		float heightFraction = (float) ( 1 - Math.abs(Math.pow((((Math.sqrt(0.2) + Math.sqrt(1.2)) * showPos) - Math.sqrt(1.2)), 2) - 0.2));
-		int yPos = (int) (startPos * (1 - heightFraction) + heightFraction * endPos);
 		
-		int scaledWidth = (int) (youWinImg.getWidth() * scale);		
-		int scaledHeight = (int) (youWinImg.getHeight() * scale);
-		int xStart = centerX - (scaledWidth / 2);
+		int height = youWinImg.getHeight() * width / youWinImg.getWidth();
+		int yPos = (int) (startPos * (1 - heightFraction) + heightFraction * (endPos - height / 2));
+
+		int xStart = centerX - (width / 2);
 		
-		g.drawImage(youWinImg, xStart, yPos, xStart + scaledWidth, yPos + scaledHeight, 
+		g.drawImage(youWinImg, xStart, yPos, xStart + width, yPos + height, 
 			0, 0, youWinImg.getWidth(), youWinImg.getHeight(), null);;
 	}
 
@@ -54,6 +54,7 @@ public class YouWinGraphic {
 				requestRepaint.run();
 			}
 		};
+		visible = true;
 		timer.schedule(task, 0, 1000 / Concentration.FPS);
 	}
 	

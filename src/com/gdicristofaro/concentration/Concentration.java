@@ -11,11 +11,13 @@ import java.awt.event.MouseEvent;
 import java.awt.image.BufferStrategy;
 import java.awt.image.BufferedImage;
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.net.URL;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Random;
 import java.util.Timer;
@@ -30,13 +32,7 @@ import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JOptionPane;
 
-
-// TODO sound effects / soundtrack startup
-// TODO you win
-// TODO remove wait time for card clicks
-// TODO restart game
 // TODO fullscreen / window items
-
 public class Concentration extends JFrame {
 	// convert from one type to another
 	@FunctionalInterface
@@ -161,7 +157,6 @@ public class Concentration extends JFrame {
 		catch (LineUnavailableException | UnsupportedAudioFileException e) {
 			throw new IllegalStateException("Problem loading clip " + path.getAbsolutePath() + " into memory");
 		}
-
 	}
 	
 	public static <T> T loadInternalResource(String file, Reader<URL, T> converter) throws IOException {
@@ -198,7 +193,7 @@ public class Concentration extends JFrame {
 	
 	public static final int FPS = 32;
 	// wait 2000 millis before flipping cards back over
-	private static final int CARD_SHOW_WAIT_TIME = 2000;
+	private static final int CARD_SHOW_WAIT_TIME = 1000;
 	
 	// locations of external audio files
 	private static final String SOUND_TRACK_LOC = "soundtrack.wav";
@@ -266,7 +261,8 @@ public class Concentration extends JFrame {
 	private BufferedImage background, youWinImg, cardBack;
 	
 	// sound resources
-	private Clip soundtrack, flipSound, youWinSound, rightChoiceSound, wrongChoiceSound;
+	private byte[] flipSound, youWinSound, rightChoiceSound, wrongChoiceSound;
+	private Clip soundtrack;
 	
 	// drawable components
 	private ArrayList<Tuple<Button, Point>> buttonLoc = new ArrayList<Tuple<Button, Point>>();
@@ -281,13 +277,9 @@ public class Concentration extends JFrame {
 			int xClick = e.getX();
 			int yClick = e.getY();
 
-			// for this game, take the first item
-			for (ClickRecord record : listeners) {
-				if (record.getBounds().contains(xClick, yClick)) {
+			for (ClickRecord record : listeners)
+				if (record.getBounds() == null || record.getBounds().contains(xClick, yClick))
 					record.getAction().run();
-					return;
-				}
-			}
 		}
 	};
 	
@@ -335,7 +327,8 @@ public class Concentration extends JFrame {
 		setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
 		setTitle("Concentration");
 		setUndecorated(true);
-
+		
+		//setExtendedState(JFrame.MAXIMIZED_BOTH);
 		
 		// TODO go back and fix this
 		/*
@@ -363,20 +356,37 @@ public class Concentration extends JFrame {
 		createBufferStrategy(2);
 		this.buffStrategy = getBufferStrategy();
 		repaint();
+		
+		if (this.soundtrack != null)
+			this.soundtrack.loop(Clip.LOOP_CONTINUOUSLY);
 	}
 		
-	
+	// plays audio data from byte array
+	public void playSound(byte[] audioData) {
+		if (audioData != null && this.soundson) {
+			try {
+				Clip clip = AudioSystem.getClip();
+		        clip.open(AudioSystem.getAudioInputStream(new ByteArrayInputStream(audioData)));
+		        clip.start();
+			}
+			catch (LineUnavailableException | UnsupportedAudioFileException | IOException e) {
+				throw new IllegalStateException("Problem playing byte array");
+			}
+		}
+	}
 	
 	
 	// toggles sound on or off
 	public void toggleSound() {
 		if (this.soundson) {
 			this.soundson = false;
-			this.soundtrack.stop();
+			if (this.soundtrack != null)
+				this.soundtrack.stop();
 		}
 		else {
 			this.soundson = true;
-			this.soundtrack.start();
+			if (this.soundtrack != null)
+				this.soundtrack.loop(Clip.LOOP_CONTINUOUSLY);
 		}
 		
 		repaint();
@@ -492,11 +502,14 @@ public class Concentration extends JFrame {
 		Reader<File, Clip> loadSnd = (File f) -> loadClip(f);
 		Function<Exception, Clip> onSndErr = (Exception e) -> null;
 		
+		Reader<File, byte[]> loadBytes = (File f) -> Files.readAllBytes(f.toPath());
+		Function<Exception, byte[]> onByteErr = (Exception e) -> null;
+		
 		this.soundtrack = loadExternalResource(dir, SOUND_TRACK_LOC, loadSnd, onSndErr);
-		this.flipSound = loadExternalResource(dir, SOUND_FLIP_LOC, loadSnd, onSndErr);
-		this.youWinSound = loadExternalResource(dir, SOUND_WIN_LOC, loadSnd, onSndErr);
-		this.rightChoiceSound = loadExternalResource(dir, SOUND_RIGHTCHOICE_LOC, loadSnd, onSndErr);
-		this.wrongChoiceSound = loadExternalResource(dir, SOUND_WRONGCHOICE_LOC, loadSnd, onSndErr);
+		this.flipSound = loadExternalResource(dir, SOUND_FLIP_LOC, loadBytes, onByteErr);
+		this.youWinSound = loadExternalResource(dir, SOUND_WIN_LOC, loadBytes, onByteErr);
+		this.rightChoiceSound = loadExternalResource(dir, SOUND_RIGHTCHOICE_LOC, loadBytes, onByteErr);
+		this.wrongChoiceSound = loadExternalResource(dir, SOUND_WRONGCHOICE_LOC, loadBytes, onByteErr);
 	}
 	
 	public void loadConfigFileResources(File configFile) {
@@ -538,15 +551,27 @@ public class Concentration extends JFrame {
 	}
 	
 	public void resetGame() {
-		// TODO
+		this.cards = randomizeCards(this.matches);
+		
+		setPlacementListeners();
+		found = 0;
+		acceptingAction = true;
+		
+		// reset cards so they are visible
+		for (Card c : this.cards)
+			c.reset();
+		
+		repaint();
 	}
 	
 	
 	public void onCardClick(final Card c) {
-		// don't allow if not accepting action
-		if (!acceptingAction)
+		// don't allow if not accepting action or isn't visible
+		if (!acceptingAction || !c.isVisible())
+		//if (!c.isVisible()) // this speeds up gameplay by removing the user lockout when cards are flipping
 			return;
 		
+		// after the card is flipped over, this is the callback to run
 		Runnable callback;
 		
 		// there are no cards showing yet
@@ -554,44 +579,52 @@ public class Concentration extends JFrame {
 			showing = c;
 			callback = returnControl;
 		}
-		// there is a card showing, so either
+		// there is a card showing
 		else {
+			Card lastShowing = showing;
+			showing = null;
+			
 			// if showing cards are next to each other in matches, they match and can be dissolved
-			if (matches.indexOf(showing) / 2 == matches.indexOf(c) / 2) {
+			if (matches.indexOf(lastShowing) / 2 == matches.indexOf(c) / 2) {
+				// increment found items
+				found += 2;
+
 				callback = () -> {
 					// when cards are dissolved
 					Runnable onFinish = () -> {
 						// if we have found all items
 						if (found == matches.size()) {
+							// show you win item
 							final ClickRecord clickRecord = new ClickRecord(
-								new Rectangle(0,0,
-									Concentration.this.getWidth(), Concentration.this.getHeight()), 
+								null, 
 								() -> {
-									resetGame();
 									// remove this listener from the listeners
 									listeners.remove(this);
+									youWin.hide();
+									resetGame();
 								});
 							
-							youWin.show(() -> listeners.add(0, clickRecord));	
+							youWin.show(() -> listeners.add(clickRecord));
+							playSound(this.youWinSound);
 						}
 						else {
-							// otherwise, just return control
+							// otherwise, just return control after dissolve
 							returnControl.run();
 						}
 					};
 
-					found += 2;
+					// dissolve both cards since they match
 					c.onDissolve(CARD_SHOW_WAIT_TIME, null);
-					showing.onDissolve(CARD_SHOW_WAIT_TIME, onFinish);
-					showing = null;
+					lastShowing.onDissolve(CARD_SHOW_WAIT_TIME, onFinish);
+					playSound(this.rightChoiceSound);
 				};
 			}
-			// otherwise, put them back
+			// if cards don't match, put them back
 			else {
 				callback = () -> {
 					c.onFlipBack(CARD_SHOW_WAIT_TIME, null);
-					showing.onFlipBack(CARD_SHOW_WAIT_TIME, returnControl);
-					showing = null;
+					lastShowing.onFlipBack(CARD_SHOW_WAIT_TIME, returnControl);
+					playSound(this.wrongChoiceSound);
 				};
 			}
 		}
@@ -599,6 +632,7 @@ public class Concentration extends JFrame {
 		// run the card flip
 		acceptingAction = false;
 		c.onFlip(0, callback);
+		playSound(this.flipSound);
 	}
 	
 	
@@ -624,11 +658,12 @@ public class Concentration extends JFrame {
 		for (Tuple<Card, Point> e : this.cardLoc)
 			e.getFirst().paintCard(g, (int) e.getSecond().getX(), (int) e.getSecond().getY(), scale);
 		
+		// draw you win graphic
+		youWin.paint(g, (int) (getWidth() * .9), 0, getHeight() / 2, getWidth() / 2);
+		
 		// draw the buttons
 		for (Tuple<Button, Point> e : this.buttonLoc)
 			e.getFirst().paint(g, (int) e.getSecond().getX(), (int) e.getSecond().getY());
-		
-		// TODO draw win icon
 
 		g.dispose();
 		this.buffStrategy.show();

@@ -158,11 +158,12 @@ public class Card {
 	
 	// the card is still in play
 	public boolean isVisible() {
-		return (dissolveAmt <= 0);
+		return (dissolveAmt == 1);
 	}
 	
-	public void setVisible(boolean visible) {
-		dissolveAmt = (visible) ? 1 : 0;
+	public void reset() {
+		dissolveAmt = 1;
+		flipPos = 0;
 	}
 	
 	public void onFlip(int millisDelay, final Runnable callback) {
