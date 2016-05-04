@@ -6,6 +6,8 @@ import java.awt.Graphics2D;
 import java.awt.GraphicsEnvironment;
 import java.awt.Point;
 import java.awt.Rectangle;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferStrategy;
@@ -32,7 +34,6 @@ import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JOptionPane;
 
-// TODO fullscreen / window items
 public class Concentration extends JFrame {
 	// convert from one type to another
 	@FunctionalInterface
@@ -320,28 +321,11 @@ public class Concentration extends JFrame {
 
 
 	public Concentration() {
-
-		setSize(700,500);
-		setLocationRelativeTo(null);		
-		
-		setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-		setTitle("Concentration");
-		setUndecorated(true);
-		
-		//setExtendedState(JFrame.MAXIMIZED_BOTH);
-		
-		// TODO go back and fix this
-		/*
-		setUndecorated(true);
-		setResizable(false);
-		GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().setFullScreenWindow(this);
-		 */
 		loadInternalResources();
 		
 		String configDir = 
-		//	new File(Concentration.class.getProtectionDomain().getCodeSource().getLocation().getPath()).getParent();
-		//TODO fix this
-		new File(Concentration.class.getProtectionDomain().getCodeSource().getLocation().getPath()).getParentFile().getParent();
+			new File(Concentration.class.getProtectionDomain().getCodeSource().getLocation().getPath()).getParent();
+		
 		File startConfig = new File(configDir + File.separator + CONFIG_FILE_NAME);
 		
 		loadConfigFileResources(startConfig);
@@ -349,10 +333,27 @@ public class Concentration extends JFrame {
 		this.cards = randomizeCards(this.matches);
 		this.rows = determineRows(this.cards.length);
 		
+		setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+		setTitle("Concentration");
+		
+		if (this.fullscreen)
+			goFullScreen();
+		else
+			goWindowed();
+		
+		// make sure that items are replaced when window is resized
+		addComponentListener(new ComponentAdapter() {  
+	        public void componentResized(ComponentEvent evt) {
+	    		setPlacementListeners();
+	    		repaint();
+	        }
+		});
+		
+		setVisible(true);
+		
 		setPlacementListeners();
 		addMouseListener(mouseAdapter);
 		
-		setVisible(true);
 		createBufferStrategy(2);
 		this.buffStrategy = getBufferStrategy();
 		repaint();
@@ -360,7 +361,34 @@ public class Concentration extends JFrame {
 		if (this.soundtrack != null)
 			this.soundtrack.loop(Clip.LOOP_CONTINUOUSLY);
 	}
+	
+	public void goFullScreen() {
+		setResizable(false);
+		GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().setFullScreenWindow(this);
+	}
+	
+	public void goWindowed() {
+		GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().setFullScreenWindow(null);
+		setSize(700,500);
+		setLocationRelativeTo(null);
+		setResizable(true);
+	}
+	
+	public void toggleFullScreen() {
+		if (this.fullscreen) {
+			this.fullscreen = false;
+			goWindowed();
+		}
+		else {
+			this.fullscreen = true;
+			goFullScreen();
+		}
 		
+		setPlacementListeners();
+		repaint();
+	}
+	
+	
 	// plays audio data from byte array
 	public void playSound(byte[] audioData) {
 		if (audioData != null && this.soundson) {
@@ -375,6 +403,25 @@ public class Concentration extends JFrame {
 		}
 	}
 	
+	// gets the height of the canvas part of the frame
+	public int getAdjustedHeight() {
+		return this.getHeight() - this.getInsets().top - this.getInsets().bottom;
+	}
+	
+	// get the width of the canvas part of the frame
+	public int getAdjustedWidth() {
+		return this.getWidth() - this.getInsets().left - this.getInsets().right;
+	}
+	
+	// where the canvas starts
+	public int getXStart() {
+		return this.getInsets().left;
+	}
+	
+	// where the canvas ends
+	public int getYStart() {
+		return this.getInsets().top;
+	}
 	
 	// toggles sound on or off
 	public void toggleSound() {
@@ -392,33 +439,19 @@ public class Concentration extends JFrame {
 		repaint();
 	}
 	
-	public void toggleFullScreen() {
-		if (this.fullscreen) {
-			this.fullscreen = false;
-			setResizable(false);
-			GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().setFullScreenWindow(this);
-		}
-		else {
-			this.fullscreen = true;
-			setSize(700,500);
-			setResizable(true);
-			setLocationRelativeTo(null);
-		}
-		
-		setPlacementListeners();
-		repaint();
-	}
-	
 	public void setPlacementListeners() {
 		// place this.buttons
 		listeners.clear();
 		buttonLoc.clear();
+		int y = Button.BUTTON_SPACING + this.getYStart();
 		for (int i = 0; i < this.buttons.length; i++) {
-			int x = this.getWidth() - ((this.buttons.length - i) * (Button.BUTTON_SPACING + Button.BUTTON_WIDTH));
-			buttonLoc.add(Tuple.get(this.buttons[i], new Point(x, Button.BUTTON_SPACING)));
+			int x = this.getXStart() + this.getAdjustedWidth() - 
+				((this.buttons.length - i) * (Button.BUTTON_SPACING + Button.BUTTON_WIDTH));
+			
+			buttonLoc.add(Tuple.get(this.buttons[i], new Point(x, y)));
 			listeners.add(
 				new ClickRecord(
-					new Rectangle(x, Button.BUTTON_SPACING, Button.BUTTON_WIDTH, Button.BUTTON_WIDTH), 
+					new Rectangle(x, y, Button.BUTTON_WIDTH, Button.BUTTON_WIDTH), 
 					this.buttons[i].getAction()));
 		}
 		
@@ -430,19 +463,19 @@ public class Concentration extends JFrame {
 		double unscaledWidth = ((Card.CARD_WIDTH + Card.CARD_SPACING) * columns) + Card.CARD_SPACING;
 		
 		// make room for buttons before cards
-		double upperMargin = Button.BUTTON_WIDTH + Button.BUTTON_SPACING;
+		double upperMargin = this.getYStart() + Button.BUTTON_WIDTH + Button.BUTTON_SPACING;
 		double adjustedHeight = this.getHeight() - upperMargin;
 		
 		// determine how much the cards should be scaled to fit appropriately on the screen
 		this.scale = Math.min(adjustedHeight / unscaledHeight, 
-			((double) this.getWidth()) / unscaledWidth);
+			((double) this.getAdjustedWidth()) / unscaledWidth);
 			
 		double cardWidth = Card.CARD_WIDTH * scale;
 		double cardHeight = Card.CARD_HEIGHT * scale;
 		double cardSpacing = Card.CARD_SPACING * scale;
 		
 		// determine upper left corner for where cards start
-		int xStart = (int) (((this.getWidth() - scale * unscaledWidth) / 2) + cardSpacing);	
+		int xStart = (int) (((this.getAdjustedWidth() - scale * unscaledWidth) / 2) + cardSpacing) + this.getXStart();	
 		int yStart = (int) ((((adjustedHeight - scale * unscaledHeight) / 2) + cardSpacing) + upperMargin);
 				
 		// determine placement for cards 
@@ -647,7 +680,9 @@ public class Concentration extends JFrame {
 		}
 		
 		// draw background
-		g.drawImage(this.background, 0, 0, this.getWidth(), this.getHeight(),
+		g.drawImage(this.background, 
+			this.getXStart(), this.getYStart(), 
+			this.getAdjustedWidth() + this.getXStart(), this.getAdjustedHeight() + this.getYStart(),
 			0, 0, this.background.getWidth(), this.background.getHeight(), null);
 		
 		// draw shadows of cards
@@ -659,7 +694,7 @@ public class Concentration extends JFrame {
 			e.getFirst().paintCard(g, (int) e.getSecond().getX(), (int) e.getSecond().getY(), scale);
 		
 		// draw you win graphic
-		youWin.paint(g, (int) (getWidth() * .9), 0, getHeight() / 2, getWidth() / 2);
+		youWin.paint(g, (int) (getAdjustedWidth() * .9), 0, getAdjustedHeight() / 2, getAdjustedWidth() / 2);
 		
 		// draw the buttons
 		for (Tuple<Button, Point> e : this.buttonLoc)
